@@ -1,0 +1,7 @@
+package il.fridman.tempus.employee.repository;
+
+import il.fridman.tempus.employee.entity.Contract;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface ContractRepository extends JpaRepository<Contract, Long> {
+}
