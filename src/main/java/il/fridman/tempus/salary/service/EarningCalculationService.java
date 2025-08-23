@@ -1,8 +1,8 @@
 package il.fridman.tempus.salary.service;
 
 import il.fridman.tempus.aspect.Loggable;
+import il.fridman.tempus.redis.RedisService;
 import il.fridman.tempus.salary.entity.Calculation;
-import il.fridman.tempus.salary.entity.CalculationLog;
 import il.fridman.tempus.salary.entity.Earning;
 import il.fridman.tempus.employee.entity.Employee;
 import il.fridman.tempus.timekeeping.entity.Timesheet;
@@ -32,45 +32,66 @@ public class EarningCalculationService {
     private final CalendarService calendarService;
     private final SettingService settingService;
     private final CalculationService calculationService;
+    private final RedisService redisService;
 
     @Transactional
     public Calculation calculate(Employee employee, Earning earning, YearMonth payPeriod) {
         double amount = 0.00;
-        List<CalculationLog> logs = new ArrayList<>();
         Calculation calculation = new Calculation(payPeriod, earning, employee);
+        String redisKey = "salary:" + employee.getId() + ":" + payPeriod.toString();
 
         if (earning.getBasis() == PayrollBasis.FIXED) {
             amount = 1.00;
-            logs.add(new CalculationLog(calculation, "Payroll basis", "Fixed earning"));
-            logs.add(new CalculationLog(calculation, "Payroll amount", "1.00"));
-
+            calculation.setLog("Payroll basis", "Fixed earning");
+            calculation.setLog("Payroll amount", "1.00");
         } else if (earning.getBasis() == PayrollBasis.WORKING_HOURS) {
-            double totalHoursActual = 0.00;
-            logs.add(new CalculationLog(calculation, "Payroll basis", "Calculating based on working hours"));
+            calculation.setLog("Payroll basis", "Calculating based on working hours");
 
-            for (Timesheet timesheet : timesheetService.getByTimecodeAndPeriod(employee, Timecode.WORK,
-                    payPeriod.getMonthValue(), payPeriod.getYear())) {
-                totalHoursActual += timesheet.getHours();
-            }
-
-            double totalHoursStandard = getHoursStandard(employee, payPeriod);
-            logs.add(new CalculationLog(calculation, "Total actual hours", String.valueOf(totalHoursActual)));
-            logs.add(new CalculationLog(calculation, "Total standard hours", String.valueOf(totalHoursStandard)));
+            double totalHoursActual = getActualHours(employee, payPeriod, redisKey);
+            double totalHoursStandard = getStandardHours(employee, payPeriod, redisKey);
+            calculation.setLog("Total actual hours", String.valueOf(totalHoursActual));
+            calculation.setLog("Total standard hours", String.valueOf(totalHoursStandard));
 
             amount = totalHoursActual / totalHoursStandard;
             amount = new BigDecimal(amount).setScale(2, RoundingMode.HALF_DOWN).doubleValue();
             amount = amount > 1 ? 1 : amount;
         }
-        logs.add(new CalculationLog(calculation, "Payroll amount", String.valueOf(amount)));
+        calculation.setLog("Payroll amount", String.valueOf(amount));
         calculation.setAmount(amount);
         calculation.setSum(amount * earning.getRate());
-        calculation.setLogs(logs);
 
         return calculationService.save(calculation);
     }
 
-    public double getHoursStandard(Employee employee, YearMonth payPeriod) {
-        double hoursStandard = 0.00;
+    public double getActualHours(Employee employee, YearMonth payPeriod, String redisKey) {
+
+        Object totalHoursActualFromCache = redisService.getHashValue(redisKey, "actualHours");
+        if (totalHoursActualFromCache == null) {
+            totalHoursActualFromCache = 0.00;
+        }
+        double totalHoursActual = (double) totalHoursActualFromCache;
+        if (totalHoursActual > 0.00) {
+            return totalHoursActual;
+        }
+
+        for (Timesheet timesheet : timesheetService.getByTimecodeAndPeriod(employee, Timecode.WORK,
+                payPeriod.getMonthValue(), payPeriod.getYear())) {
+            totalHoursActual += timesheet.getHours();
+        }
+        redisService.setHashValue(redisKey, "actualHours", totalHoursActual);
+        return totalHoursActual;
+    }
+
+    public double getStandardHours(Employee employee, YearMonth payPeriod, String redisKey) {
+
+        Object totalHoursStandardFromCache =  redisService.getHashValue(redisKey, "standardHours");
+        if (totalHoursStandardFromCache == null) {
+            totalHoursStandardFromCache = 0.00;
+        }
+        double totalHoursStandard = (double) totalHoursStandardFromCache;
+        if (totalHoursStandard > 0.00) {
+            return totalHoursStandard;
+        }
 
         Map<String, Double> workingHoursPlan = settingService.getParameterValues(employee,
                 SettingParameter.MIN_WORKING_HOURS,
@@ -97,9 +118,10 @@ public class EarningCalculationService {
             }
             if (!quotes.isEmpty()) {
                 System.out.println("Quotes for " + date + ": " + quotes);
-                hoursStandard += Collections.min(quotes);
+                totalHoursStandard += Collections.min(quotes);
             }
         }
-        return hoursStandard;
+        redisService.setHashValue(redisKey, "standardHours", totalHoursStandard);
+        return totalHoursStandard;
     }
 }

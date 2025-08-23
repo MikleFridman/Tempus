@@ -2,6 +2,7 @@ package il.fridman.tempus.salary.entity;
 
 import il.fridman.tempus.general.entity.BasicEntity;
 import il.fridman.tempus.employee.entity.Employee;
+import jakarta.annotation.PostConstruct;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
@@ -11,6 +12,7 @@ import lombok.Setter;
 import org.hibernate.annotations.SQLRestriction;
 
 import java.time.YearMonth;
+import java.util.ArrayList;
 import java.util.List;
 
 @Getter
@@ -56,5 +58,10 @@ public class Calculation extends BasicEntity {
         this.payroll = payroll;
         this.employee = employee;
         this.tariff = payroll.getRate();
+        this.logs = new ArrayList<>();
+    }
+
+    public void setLog(String stage, String message) {
+        logs.add(new CalculationLog(this, stage, message));
     }
 }
