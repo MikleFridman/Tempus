@@ -2,7 +2,6 @@ package il.fridman.tempus.salary.entity;
 
 import il.fridman.tempus.general.entity.BasicEntity;
 import il.fridman.tempus.employee.entity.Employee;
-import jakarta.annotation.PostConstruct;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;

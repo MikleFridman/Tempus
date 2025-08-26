@@ -37,60 +37,75 @@ public class EarningCalculationService {
     @Transactional
     public Calculation calculate(Employee employee, Earning earning, YearMonth payPeriod) {
         double amount = 0.00;
+        double rate = 0.00;
         Calculation calculation = new Calculation(payPeriod, earning, employee);
         String redisKey = "salary:" + employee.getId() + ":" + payPeriod.toString();
 
         if (earning.getBasis() == PayrollBasis.FIXED) {
             amount = 1.00;
+            rate = earning.getRate();
             calculation.setLog("Payroll basis", "Fixed earning");
             calculation.setLog("Payroll amount", "1.00");
         } else if (earning.getBasis() == PayrollBasis.WORKING_HOURS) {
+            double actualHours = getActualHours(employee, payPeriod, redisKey);
+            double standardHours = getStandardHours(employee, payPeriod, redisKey);
             calculation.setLog("Payroll basis", "Calculating based on working hours");
+            calculation.setLog("Actual hours", String.valueOf(actualHours));
+            calculation.setLog("Standard hours", String.valueOf(standardHours));
 
-            double totalHoursActual = getActualHours(employee, payPeriod, redisKey);
-            double totalHoursStandard = getStandardHours(employee, payPeriod, redisKey);
-            calculation.setLog("Total actual hours", String.valueOf(totalHoursActual));
-            calculation.setLog("Total standard hours", String.valueOf(totalHoursStandard));
-
-            amount = totalHoursActual / totalHoursStandard;
+            amount = actualHours / standardHours;
             amount = new BigDecimal(amount).setScale(2, RoundingMode.HALF_DOWN).doubleValue();
             amount = amount > 1 ? 1 : amount;
+            rate = earning.getRate();
+
+            if (actualHours > standardHours) {
+                double overtimeHours = actualHours - standardHours;
+                calculation.setLog("Overtime hours", String.valueOf(overtimeHours));
+                redisService.setHashValue(redisKey, "overtimeHours", overtimeHours);
+            }
+        } else if (earning.getBasis() == PayrollBasis.OVERTIME_HOURS) {
+            double overtimeHours = getOvertimeHours(employee, payPeriod, redisKey);
+            calculation.setLog("Payroll basis", "Calculating based on overtime hours");
+            calculation.setLog("Overtime hours", String.valueOf(overtimeHours));
+            amount = overtimeHours;
+            rate = getOvertimeRate(employee, payPeriod);
         }
+
         calculation.setLog("Payroll amount", String.valueOf(amount));
         calculation.setAmount(amount);
-        calculation.setSum(amount * earning.getRate());
+        calculation.setSum(amount * rate);
 
         return calculationService.save(calculation);
     }
 
     public double getActualHours(Employee employee, YearMonth payPeriod, String redisKey) {
 
-        Object totalHoursActualFromCache = redisService.getHashValue(redisKey, "actualHours");
-        if (totalHoursActualFromCache == null) {
-            totalHoursActualFromCache = 0.00;
+        Object actualHoursFromCache = redisService.getHashValue(redisKey, "actualHours");
+        if (actualHoursFromCache == null) {
+            actualHoursFromCache = 0.00;
         }
-        double totalHoursActual = (double) totalHoursActualFromCache;
-        if (totalHoursActual > 0.00) {
-            return totalHoursActual;
+        double actualHours = (double) actualHoursFromCache;
+        if (actualHours > 0.00) {
+            return actualHours;
         }
 
         for (Timesheet timesheet : timesheetService.getByTimecodeAndPeriod(employee, Timecode.WORK,
                 payPeriod.getMonthValue(), payPeriod.getYear())) {
-            totalHoursActual += timesheet.getHours();
+            actualHours += timesheet.getHours();
         }
-        redisService.setHashValue(redisKey, "actualHours", totalHoursActual);
-        return totalHoursActual;
+        redisService.setHashValue(redisKey, "actualHours", actualHours);
+        return actualHours;
     }
 
     public double getStandardHours(Employee employee, YearMonth payPeriod, String redisKey) {
 
-        Object totalHoursStandardFromCache =  redisService.getHashValue(redisKey, "standardHours");
-        if (totalHoursStandardFromCache == null) {
-            totalHoursStandardFromCache = 0.00;
+        Object standardHoursFromCache =  redisService.getHashValue(redisKey, "standardHours");
+        if (standardHoursFromCache == null) {
+            standardHoursFromCache = 0.00;
         }
-        double totalHoursStandard = (double) totalHoursStandardFromCache;
-        if (totalHoursStandard > 0.00) {
-            return totalHoursStandard;
+        double standardHours = (double) standardHoursFromCache;
+        if (standardHours > 0.00) {
+            return standardHours;
         }
 
         Map<String, Double> workingHoursPlan = settingService.getParameterValues(employee,
@@ -118,10 +133,34 @@ public class EarningCalculationService {
             }
             if (!quotes.isEmpty()) {
                 System.out.println("Quotes for " + date + ": " + quotes);
-                totalHoursStandard += Collections.min(quotes);
+                standardHours += Collections.min(quotes);
             }
         }
-        redisService.setHashValue(redisKey, "standardHours", totalHoursStandard);
-        return totalHoursStandard;
+        redisService.setHashValue(redisKey, "standardHours", standardHours);
+        return standardHours;
+    }
+
+    public double getOvertimeHours(Employee employee, YearMonth payPeriod, String redisKey) {
+        double overtimeHours;
+
+        Object overtimeHoursFromCache = redisService.getHashValue(redisKey, "overtimeHours");
+        if (overtimeHoursFromCache != null) {
+            overtimeHours = (double) overtimeHoursFromCache;
+            return overtimeHours;
+        }
+
+        double actualHours = getActualHours(employee, payPeriod, redisKey);
+        double standardHours = getStandardHours(employee, payPeriod, redisKey);
+        if (actualHours <= standardHours) {
+            return 0.00;
+        }
+        overtimeHours = actualHours - standardHours;
+        return overtimeHours;
+    }
+
+    public double getOvertimeRate(Employee employee, YearMonth payPeriod) {
+        return settingService.getParameterValues(employee, SettingParameter.HOURLY_RATE,
+                LocalDate.of(payPeriod.getYear(), payPeriod.getMonth(), 1))
+                .getOrDefault(DayType.REGULAR.name(), 0.00);
     }
 }

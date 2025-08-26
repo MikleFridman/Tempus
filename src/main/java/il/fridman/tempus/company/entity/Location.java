@@ -3,6 +3,7 @@ package il.fridman.tempus.company.entity;
 import il.fridman.tempus.general.entity.BasicEntity;
 import jakarta.persistence.*;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -28,6 +29,7 @@ public class Location  extends BasicEntity {
 
     @ManyToOne
     @JoinColumn(name = "company_id", nullable = false)
+    @NotNull(message = "Company cannot be null")
     private Company company;
 
     public Location(String name, String address, Company company) {

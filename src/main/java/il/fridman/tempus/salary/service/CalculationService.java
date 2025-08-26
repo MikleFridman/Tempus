@@ -2,6 +2,7 @@ package il.fridman.tempus.salary.service;
 
 import il.fridman.tempus.aspect.Loggable;
 import il.fridman.tempus.employee.entity.Employee;
+import il.fridman.tempus.redis.RedisService;
 import il.fridman.tempus.salary.entity.Calculation;
 import il.fridman.tempus.salary.repository.CalculationRepository;
 import il.fridman.tempus.general.service.EntityService;
@@ -18,6 +19,7 @@ import java.util.List;
 public class CalculationService implements EntityService<Calculation> {
 
     private final CalculationRepository calculationRepository;
+    private final RedisService redisService;
 
     @Override
     @Transactional
@@ -54,5 +56,7 @@ public class CalculationService implements EntityService<Calculation> {
             clearLog(calculation);
             calculationRepository.delete(calculation);
         }
+        String redisKey = "salary:" + employee.getId() + ":" + payPeriod.toString();
+        redisService.deleteHashValue(redisKey);
     }
 }
